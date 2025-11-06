@@ -34,7 +34,7 @@ class VectorRaster:
         assert "geometry" in df.columns, "GeoDataFrame must have a 'geometry' column"
 
     @wraps(polygons_to_raster_int)
-    def to_raster(self, da_target, **kwargs):
+    def to_raster(self, da_target, limit_num_polygons=200, **kwargs):
         """
         Convert the GeoDataFrame to a raster mask.
 
@@ -65,14 +65,14 @@ class VectorRaster:
         geom = df.geometry
         da = prep_raster(da_target)
 
-        if len(geom) == 1:
-            mask = polygon_to_raster_bool(geom.iloc[0], da)
-        elif len(geom) < 20:
-            mask = polygons_to_raster_int(df, da, **kwargs)
-        elif len(geom) >= 20:
-            raise ValueError("Too many polygons to convert to raster.")
-        elif len(geom) == 0:
+        if len(geom) == 0:
             raise ValueError("No polygons to convert to raster.")
+        elif len(geom) == 1:
+            mask = polygon_to_raster_bool(geom.iloc[0], da)
+        elif len(geom) <= limit_num_polygons:
+            mask = polygons_to_raster_int(df, da, **kwargs)
+        elif len(geom) > limit_num_polygons:
+            raise ValueError("Too many polygons to convert to raster.")
         
         return mask
     

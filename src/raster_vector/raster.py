@@ -52,6 +52,7 @@ def get_bounds_latlon(da:xr.DataArray)->tuple:
 
     bbox = bbox_to_geopandas(da.rio.bounds(), crs=da.rio.crs)
     bbox = bbox.to_crs(4326).total_bounds
+    bbox = [float(b) for b in bbox]  # ensure native python types
 
     return tuple(bbox)
 

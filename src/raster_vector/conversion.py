@@ -62,16 +62,16 @@ def raster_bool_to_vector(da: xr.DataArray, combine_polygons=False, buffer_dist=
     return gdf
 
 
-def raster_int_to_vector(da: xr.DataArray, names=None, buffer_dist=0, simplify_dist=0)->gpd.GeoDataFrame:
+def raster_int_to_vector(da: xr.DataArray, names=None, column_name='category', buffer_dist=0, simplify_dist=0)->gpd.GeoDataFrame:
     """
     Converts a rasterized mask with several classes to a vectorized representation.
 
     Parameters
     ----------
     da : xr.DataArray (int)
-        The rasterized mask with several classes.
+        The rasterized mask with several categories.
     names : list, optional
-        The names of the classes. The default is None, in which case the classes are numbered.
+        The names of the categories. The default is None, in which case the categories are numbered.
 
     Returns
     -------
@@ -82,28 +82,31 @@ def raster_int_to_vector(da: xr.DataArray, names=None, buffer_dist=0, simplify_d
     assert da.dtype == int, "Input array must be integer"
 
     mask_values = np.sort(np.unique(da.values))
-    n_classes = mask_values.size
+    n_categories = mask_values.size
 
-    if n_classes > 20:
-        raise ValueError("Too many classes to convert to vector")
+    if n_categories > 200:
+        raise ValueError("Too many categories to convert to vector")
 
     if names is None:
         names = [str(i) for i in mask_values]
     else:
-        assert len(names) == n_classes, f"Number of names (n={len(names)}) must match number of classes (n={n_classes})"
+        assert len(names) == n_categories, f"Number of names (n={len(names)}) must match number of categories (n={n_categories})"
 
     polygons = []
+    category_labels = []
     for m, name in zip(mask_values, names):
-        # logger.debug(f"Converting class {name} [{m}] to vector")
+        # logger.debug(f"Converting category {name} [{m}] to vector")
         mask = da == m
-        polygons += raster_bool_to_vector(
+        gdf = raster_bool_to_vector(
             da=mask, 
             combine_polygons=True, 
             simplify_dist=simplify_dist, 
-            buffer_dist=buffer_dist),
-    
+            buffer_dist=buffer_dist)
+        polygons.append(gdf)
+        category_labels.extend([name] * len(gdf))
+
     polygons = pd.concat(polygons, ignore_index=True)
-    polygons['class'] = names
+    polygons[column_name] = category_labels
 
     return polygons
 
@@ -126,7 +129,7 @@ def polygon_to_raster_bool(polygon, da_target):
     """
 
     if isinstance(polygon, (gpd.GeoSeries, gpd.GeoDataFrame)):
-        polygon = polygon.unary_union
+        polygon = polygon.union_all()
 
     # Get the spatial dimensions of the data array
     if 'x' in da_target.dims and 'y' in da_target.dims:
@@ -148,6 +151,7 @@ def polygon_to_raster_bool(polygon, da_target):
 
     # Create a DataArray from the mask
     mask_da = xr.DataArray(mask, dims=(y, x), coords={y: da_target[y], x: da_target[x]}).astype(bool)
+    mask_da = mask_da.rio.write_crs(da_target.rio.crs)
 
     return mask_da
 
@@ -195,5 +199,7 @@ def polygons_to_raster_int(df: gpd.GeoDataFrame, da_target: xr.DataArray, by_col
         .assign_coords(polygons=df.index)
         .max(dim='polygons')
         .astype(int))
+
+    polygons = polygons.rio.write_crs(da_target.rio.crs)
 
     return polygons

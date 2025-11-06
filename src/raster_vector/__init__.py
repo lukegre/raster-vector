@@ -6,7 +6,6 @@ from .conversion import (
     raster_bool_to_vector,
     raster_int_to_vector)
 
-from . import viz
 from . import vector
 from . import raster
 from . import projection
