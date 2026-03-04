@@ -1,25 +1,33 @@
-import rioxarray as rxr
+import rioxarray as rxr  # noqa: F401
 
+from . import accessors, projection, raster, utils, vector
 from .conversion import (
-    polygon_to_raster_bool, 
+    polygon_to_raster_bool,
     polygons_to_raster_int,
     raster_bool_to_vector,
-    raster_int_to_vector)
+    raster_int_to_vector,
+)
 
-from . import vector
-from . import raster
-from . import projection
-from . import utils
-from . import accessors
-
-from loguru import logger
+__all__ = [
+    "accessors",
+    "polygon_to_raster_bool",
+    "polygons_to_raster_int",
+    "projection",
+    "raster",
+    "raster_bool_to_vector",
+    "raster_int_to_vector",
+    "utils",
+    "vector",
+]
 
 
 def info():
-    import xarray as xr
     import numpy as np
+    import xarray as xr
 
-    da = xr.DataArray(np.ones([1, 1]), dims=['x', 'y'], coords={'x': [0], 'y': [0]}, name='dummy').rio.write_crs(4326)
+    da = xr.DataArray(
+        np.ones([1, 1]), dims=["x", "y"], coords={"x": [0], "y": [0]}, name="dummy"
+    ).rio.write_crs(4326)
     df = da.to_dataframe()
 
     accessors_help = ""
