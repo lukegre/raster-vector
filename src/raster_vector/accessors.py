@@ -1,15 +1,22 @@
-from xarray import register_dataarray_accessor, apply_ufunc
-# import pandas equivalent to register accessor for pandas
-from pandas.api.extensions import register_dataframe_accessor
-
-from loguru import logger
 from functools import wraps
 
+import geopandas as gpd
+import xarray as xr
+from loguru import logger
+
+# import pandas equivalent to register accessor for pandas
+from pandas.api.extensions import register_dataframe_accessor
+from xarray import register_dataarray_accessor
+
 from .conversion import (
-    raster_int_to_vector,
-    raster_bool_to_vector,
     polygon_to_raster_bool,
-    polygons_to_raster_int)
+    polygons_to_raster_int,
+    raster_bool_to_vector,
+    raster_int_to_vector,
+)
+from .projection import compute_utm_from_lat_lon
+from .raster import get_bounds_latlon, prep_raster, save_raster_3d_to_geotiff
+from .vector import bbox_to_geopandas, clip_geodata_to_grid
 
 
 @register_dataframe_accessor("rv")
@@ -26,7 +33,6 @@ class VectorRaster:
         return out
 
     def _check_df(self):
-        import geopandas as gpd
 
         df = self._df
 
@@ -34,15 +40,15 @@ class VectorRaster:
         assert "geometry" in df.columns, "GeoDataFrame must have a 'geometry' column"
 
     @wraps(polygons_to_raster_int)
-    def to_raster(self, da_target, limit_num_polygons=200, **kwargs):
+    def to_raster(self, da_target, **kwargs):
         """
         Convert the GeoDataFrame to a raster mask.
 
         Parameters
         ----------
         da_target : xr.DataArray
-            The target grid to match the mask to. It is assumed that the 
-            spatial dimensions [y, x] are in positions [-2, -1]. 
+            The target grid to match the mask to. It is assumed that the
+            spatial dimensions [y, x] are in positions [-2, -1].
         by_column : str, optional
             The column in the GeoDataFrame to group the polygons by. If None, then each
             row is converted to a separate integer value. The default is None.
@@ -54,14 +60,12 @@ class VectorRaster:
         xr.DataArray
             A DataArray with the raster mask with integer values.
         """
-        from .raster import prep_raster
-        import xarray as xr
-        
+
         df = self._df
         self._check_df()
 
         assert isinstance(da_target, xr.DataArray), "Must be a DataArray"
-        
+
         geom = df.geometry
         da = prep_raster(da_target)
 
@@ -69,47 +73,41 @@ class VectorRaster:
             raise ValueError("No polygons to convert to raster.")
         elif len(geom) == 1:
             mask = polygon_to_raster_bool(geom.iloc[0], da)
-        elif len(geom) <= limit_num_polygons:
+        else:
             mask = polygons_to_raster_int(df, da, **kwargs)
-        elif len(geom) > limit_num_polygons:
-            raise ValueError("Too many polygons to convert to raster.")
-        
+
         return mask
-    
+
     def crop_to_da(self, da):
-        from .vector import clip_geodata_to_grid
-        from .raster import prep_raster
 
         df = self._df
         da = prep_raster(da)
 
         return clip_geodata_to_grid(df, da)
-    
+
     def get_bbox_latlon(self, as_geopandas=False):
         bbox = tuple(self._df.to_crs("EPSG:4326").total_bounds.tolist())
 
         if as_geopandas:
-            from .vector import bbox_to_geopandas
             bbox = bbox_to_geopandas(bbox, crs="EPSG:4326")
-        
+
         return bbox
 
 
 @register_dataarray_accessor("rv")
 class RasterVector:
     def __init__(self, da) -> None:
-        from .raster import prep_raster
-        self._da = prep_raster(da)
-    
+        self._da = da
+
     def __repr__(self):
         out = "<xr.rv accessor>\n"
-        out += "    da.rv.to_polygons ( buffer_dist=0, simplify_dist=0, combine_polygons=False, names=None )\n"
+        out += "    da.rv.to_polygons ( buffer_dist=0, simplify_dist=0, combine_polygons=False, names=None )\n"  # noqa: E501
         out += "    da.rv.to_raster ( filname, **kwargs )\n"
         out += "    da.rv.get_bbox_latlon ( as_geopandas=False )\n"
         out += "    da.rv.get_utm_code ()\n"
 
         return out
-    
+
     def to_polygons(self, **kwargs):
         """
         Converts a rasterized mask to a vectorized representation.
@@ -127,7 +125,7 @@ class RasterVector:
         combine_polygons : bool, optional [False]
             If True, then polygons belonging to the same mask are combined
             into a single polygon. If False, then each connected component
-            is a separate polygon. Only applies to boolean masks. 
+            is a separate polygon. Only applies to boolean masks.
         names : list, optional [None]
             If the mask is integer type, then a list of names for each class
             can be provided. The default is None, in which case the classes
@@ -137,19 +135,19 @@ class RasterVector:
         -------
         gpd.GeoDataFrame
             A GeoDataFrame with the vectorized representation of the mask.
-        """        
-        da = self._da
-        
+        """
+        da = prep_raster(self._da)
+
         if da.dtype == bool:
             df = raster_bool_to_vector(da, **kwargs)
         elif da.dtype == int:
             df = raster_int_to_vector(da, **kwargs)
         else:
             raise TypeError("DataArray must be type [int|bool]")
-        
+
         return df
-    
-    def to_raster(self, filname:str, **kwargs):
+
+    def to_raster(self, filname: str, **kwargs):
         """
         Saves the DataArray as a geotiff file.
 
@@ -160,12 +158,11 @@ class RasterVector:
         kwargs : dict
             Additional keyword arguments to pass to the `rio.to_raster` method.
         """
-        from .raster import save_raster_3d_to_geotiff
-        
-        da = self._da
+
+        da = prep_raster(self._da)
 
         save_raster_3d_to_geotiff(da, filname, **kwargs)
-        
+
     def get_bbox_latlon(self, as_geopandas=False):
         """
         Returns the bounding box of the DataArray in lat/lon coordinates.
@@ -181,15 +178,12 @@ class RasterVector:
         tuple|pd.Series
             A tuple with the bounding box coordinates in lat/lon.
         """
-        from .raster import get_bounds_latlon
-        from .vector import bbox_to_geopandas
-        
-        da = self._da
+        da = prep_raster(self._da)
         bbox = get_bounds_latlon(da)
-        
+
         if as_geopandas:
-            bbox = bbox_to_geopandas(bbox, crs='EPSG:4326')
-        
+            bbox = bbox_to_geopandas(bbox, crs="EPSG:4326")
+
         return bbox
 
     def get_utm_code(self):
@@ -208,17 +202,20 @@ class RasterVector:
         Warning
             If the DataArray spans more than 6 degrees of longitude.
         """
-        from .projection import compute_utm_from_lat_lon
-        da = self._da
+        da = prep_raster(self._da)
 
         lon = da[da.dims[-1]].values
         lat = da[da.dims[-2]].values
         x0, x1 = lon.min(), lon.max()
 
         if (x1 - x0) > 6:
-            logger.warning("DataArray spans more than 6 degrees of longitude. UTM zones typically span 6 degrees.")
+            logger.warning(
+                "DataArray spans more than 6 degrees of longitude. UTM zones typically span 6 degrees."  # noqa: E501
+            )
         if (x1 - x0) > 12:
-            raise ValueError("DataArray spans more than 12 degrees longitude. UTM zones typically span 6 degrees.")
+            raise ValueError(
+                "DataArray spans more than 12 degrees longitude. UTM zones typically span 6 degrees."  # noqa: E501
+            )
 
         lat_center = (lat.min() + lat.max()) / 2
         lon_center = (lon.min() + lon.max()) / 2
@@ -234,7 +231,7 @@ def get_func_signature(func, drop_first=True):
     sig = signature(func)
     # remove the first argument
     if drop_first:
-        sig = " (" + str(sig)[str(sig).index(",") + 1:-1] + " )"
+        sig = " (" + str(sig)[str(sig).index(",") + 1 : -1] + " )"
     else:
         sig = " ( " + str(sig)[1:-1] + " )"
 
@@ -252,5 +249,5 @@ def get_accessor_funcs(class_object, accessor_name):
         if hasattr(obj, "__doc__"):
             if name.startswith("__"):
                 continue
-            txt += f"{accessor_name}.{name}",
+            txt += (f"{accessor_name}.{name}",)
     return txt

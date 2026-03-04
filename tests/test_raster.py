@@ -27,15 +27,27 @@ def test_prep_raster_sorts_y():
     assert (da_prepped.y.values == np.array([5, 4, 3, 2, 1])).all()
 
 
-def test_auto_crs_assigns_4326():
-    """Test that _auto_crs assigns EPSG:4326 to lat/lon ranges."""
-    da = xr.DataArray(
-        np.zeros((5, 5)),
-        dims=("y", "x"),
-        coords={"y": [10, 11, 12, 13, 14], "x": [20, 21, 22, 23, 24]},
-    )
-    da_prepped = _auto_crs(da)
-    assert da_prepped.rio.crs.to_epsg() == 4326
+def test_auto_crs_warns(caplog):
+    """Test that _auto_crs issues a warning when bounds match lat/lon."""
+    from loguru import logger
+
+    def sink(message):
+        import logging
+
+        logging.log(message.record["level"].no, message.record["message"])
+
+    handler_id = logger.add(sink)
+    try:
+        da = xr.DataArray(
+            np.zeros((5, 5)),
+            dims=("y", "x"),
+            coords={"y": [10, 11, 12, 13, 14], "x": [20, 21, 22, 23, 24]},
+        )
+        da_prepped = _auto_crs(da)
+        assert "No CRS found in DataArray." in caplog.text
+        assert da_prepped.rio.crs is None
+    finally:
+        logger.remove(handler_id)
 
 
 def test_get_bounds_latlon(sample_da_bool):

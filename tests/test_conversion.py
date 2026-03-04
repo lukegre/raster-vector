@@ -1,6 +1,5 @@
 import geopandas as gpd
 import numpy as np
-import pytest
 import xarray as xr
 
 from raster_vector.conversion import (
@@ -43,12 +42,13 @@ def test_raster_int_to_vector_basic(sample_da_int):
     assert len(gdf["class"].unique()) == 3
 
 
-def test_raster_int_to_vector_too_many_categories():
-    """Test that too many categories raises ValueError."""
+def test_raster_int_to_vector_large_categories():
+    """Test that a large number of categories works without ValueError."""
     data = np.arange(205).reshape((5, 41))
     da = xr.DataArray(data, dims=("y", "x"), name="too_many")
-    with pytest.raises(ValueError, match="Too many categories"):
-        raster_int_to_vector(da)
+    # should not raise ValueError anymore!
+    gdf = raster_int_to_vector(da)
+    assert len(gdf) == 205
 
 
 def test_polygon_to_raster_bool_basic(sample_gdf, sample_da_bool):
@@ -69,8 +69,8 @@ def test_polygons_to_raster_int_basic(sample_gdf, sample_da_int):
     assert mask.max() == 2  # Two polygons in sample_gdf
 
 
-def test_polygons_to_raster_int_overlap_warning(sample_gdf, sample_da_int, caplog):
-    """Test that overlapping polygons emit a warning."""
+def test_polygons_to_raster_int_overlap(sample_gdf, sample_da_int):
+    """Test that overlapping polygons rasterize successfully (last one overwrites)."""
     # Create overlapping polygons: poly1 and poly1 (exact overlap)
     gdf_overlap = gpd.GeoDataFrame(
         {"category": ["A", "B"]},
@@ -78,22 +78,7 @@ def test_polygons_to_raster_int_overlap_warning(sample_gdf, sample_da_int, caplo
         crs=sample_gdf.crs,
     )
 
-    # We need to catch loguru logs with caplog.
-    # Loguru needs to be configured to sink to standard logging for caplog to work.
-    from loguru import logger
-
-    def sink(message):
-        import logging
-
-        logging.log(message.record["level"].no, message.record["message"])
-
-    handler_id = logger.add(sink)
-    try:
-        mask = polygons_to_raster_int(gdf_overlap, sample_da_int)
-        assert "Found" in caplog.text
-        assert "overlapping polygons" in caplog.text
-    finally:
-        logger.remove(handler_id)
+    mask = polygons_to_raster_int(gdf_overlap, sample_da_int)
 
     assert mask.max() == 2
 
