@@ -138,6 +138,18 @@ class RasterVector:
         """
         da = prep_raster(self._da)
 
+        # prep_raster always sorts y descending. rasterio.features.shapes() adapts
+        # correctly to any y ordering via da.rio.transform(), so the sort is not
+        # needed for correct geographic positions. Restoring the original y ordering
+        # here ensures polygon output order matches the input data ordering
+        # (e.g. south-first for ascending y input, north-first for descending y input).
+        try:
+            orig_y = self._da[self._da.rio.y_dim].values
+        except Exception:
+            orig_y = self._da[self._da.dims[-2]].values
+        if orig_y[0] < orig_y[-1]:  # original y was ascending (south-to-north)
+            da = da.sortby("y", ascending=True)
+
         if da.dtype == bool:
             df = raster_bool_to_vector(da, **kwargs)
         elif da.dtype == int:

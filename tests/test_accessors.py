@@ -1,6 +1,9 @@
 import geopandas as gpd
 import numpy as np
+import rioxarray  # noqa: F401 - registers .rio accessor
 import xarray as xr
+
+import raster_vector  # noqa: F401 - registers .rv accessor
 
 
 def test_rv_to_polygons_bool(sample_da_bool):
@@ -8,6 +11,35 @@ def test_rv_to_polygons_bool(sample_da_bool):
     gdf = sample_da_bool.rv.to_polygons()
     assert isinstance(gdf, gpd.GeoDataFrame)
     assert len(gdf) == 2
+
+
+def test_rv_to_polygons_ascending_lat_order():
+    """When y is ascending (south-to-north), polygon output must preserve that ordering.
+
+    prep_raster() sorts y descending internally, which causes rasterio.features.shapes()
+    to process north-to-south and return the northernmost polygon first. The to_polygons()
+    method must restore the original y ordering so the output GeoDataFrame polygon order
+    matches the input data ordering (south-first for ascending y input).
+    """
+    data = np.zeros((10, 10), dtype=bool)
+    data[2:5, 2:5] = True  # SOUTH blob: lat ~0.222-0.444
+    data[7:9, 7:9] = True  # NORTH blob: lat ~0.777-0.888
+
+    lat = np.linspace(0, 1, 10)  # ascending (south-to-north)
+    lon = np.linspace(0, 1, 10)
+    da = xr.DataArray(data, coords={"y": lat, "x": lon}, dims=("y", "x"))
+    da.rio.write_crs("EPSG:4326", inplace=True)
+
+    gdf = da.rv.to_polygons()
+
+    assert len(gdf) == 2
+    miny_0 = gdf.geometry.iloc[0].bounds[1]
+    miny_1 = gdf.geometry.iloc[1].bounds[1]
+    assert miny_0 < miny_1, (
+        f"Expected south-first polygon ordering for ascending y input. "
+        f"Got polygon[0].miny={miny_0:.3f}, polygon[1].miny={miny_1:.3f}. "
+        "This indicates prep_raster's y-sort is not being undone before polygon extraction."
+    )
 
 
 def test_rv_to_polygons_int(sample_da_int):

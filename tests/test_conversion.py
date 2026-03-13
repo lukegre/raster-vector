@@ -51,6 +51,27 @@ def test_raster_int_to_vector_large_categories():
     assert len(gdf) == 205
 
 
+def test_raster_bool_to_vector_ascending_lat_positions():
+    """Polygons must appear at the correct geographic position when y is ascending."""
+    # Put True values in rows 0-2 of an ascending-lat array (southern region: lat 0..0.222)
+    data = np.zeros((10, 10), dtype=bool)
+    data[0:3, 3:7] = True
+
+    lat = np.linspace(0, 1, 10)  # ascending: row 0 = lat 0 (south), row 9 = lat 1 (north)
+    lon = np.linspace(0, 1, 10)
+    da = xr.DataArray(data, coords={"y": lat, "x": lon}, dims=("y", "x"))
+    da.rio.write_crs("EPSG:4326", inplace=True)
+
+    gdf = raster_bool_to_vector(da)
+
+    assert len(gdf) == 1
+    centroid_y = gdf.geometry.centroid.y.values[0]
+    assert centroid_y < 0.5, (
+        f"Polygon centroid at lat={centroid_y:.3f}, expected in southern half (< 0.5). "
+        "Likely a y-axis flip due to ascending latitude not being sorted before rasterization."
+    )
+
+
 def test_polygon_to_raster_bool_basic(sample_gdf, sample_da_bool):
     """Test basic polygon to boolean raster conversion."""
     poly = sample_gdf.geometry.iloc[0]
